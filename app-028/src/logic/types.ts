@@ -2,14 +2,27 @@
 
 export type PaperKind = 'sheet' | 'roll'
 
+export interface RollSupply {
+  /** 可用长度 mm（余料卷或整卷） */
+  lengthMm: number
+  /** 该供给卷的账面价格（分） */
+  priceCents: number
+  /** true = 已登记余料卷；false = 新整卷 */
+  leftover: boolean
+}
+
 export interface Paper {
   id: string
   name: string
   wMm: number
+  /** sheet：单张高度；roll：本次供给的第一卷长度（余料卷可为短卷） */
   hMm: number
   marginMm: number
+  /** sheet：每张价格；roll：第一卷整卷/余卷价格（按长度折算成每米价格） */
   priceCents: number
   kind: PaperKind
+  /** 使用卷筒余料时，余卷用尽后接续的新整卷规格 */
+  parentRoll?: Paper
 }
 
 export interface PhotoSize {
@@ -65,6 +78,28 @@ export interface CutStep {
   merged: boolean
 }
 
+export interface RollSegment {
+  rollIndex: number
+  /** 供给序号：第一个余卷/整卷为 0，之后按顺序接续 */
+  supplyIndex: number
+  /** 供给卷长度（mm） */
+  supplyLengthMm: number
+  /** 供给卷账面价格（分） */
+  supplyPriceCents: number
+  /** true = 该供给来自登记余料卷 */
+  supplyLeftover: boolean
+  /** 从这卷纸实际切断/计费用掉的长度（mm，含纸边） */
+  usedLengthMm: number
+  /** 这卷纸用后剩余长度（mm；整卷用尽为 0） */
+  leftoverLengthMm: number
+  /** 相对本次切断段顶端的横切位置（mm） */
+  crossCutAtMm: number
+  /** 是否整卷用尽；为 true 时不产生可下次继续使用的卷筒余料 */
+  fullRollConsumed: boolean
+  /** 本次切断段的计费金额（分） */
+  costCents: number
+}
+
 export interface Sheet {
   index: number
   placements: Placement[]
@@ -75,6 +110,9 @@ export interface Sheet {
   sheetAreaMm2: number
   utilization: number
   wasteRects: WasteRect[]
+  /** 卷筒：本次从卷上切断的实际段长；普通纸：整张高度 */
+  physicalHeightMm?: number
+  roll?: RollSegment
 }
 
 export interface WasteRect {
@@ -90,6 +128,10 @@ export interface PackStats {
   avgUtilization: number
   elapsedMs: number
   keepTogetherBroken: string[]
+  /** 卷筒：本次总送纸/计费长度（mm） */
+  usedLengthMm?: number
+  /** 卷筒：任务结束后最后一卷的剩余长度（mm） */
+  leftoverLengthMm?: number
 }
 
 export interface PackResult {
@@ -109,6 +151,14 @@ export interface CostReport {
   naiveWasteRate: number
   naiveTotalCents: number
   savedCents: number
+  /** 卷筒：每米价格（分） */
+  priceCentsPerMeter?: number
+  /** 卷筒：本次用掉的长度（米） */
+  usedMeters?: number
+  /** 卷筒：最后一卷剩余长度（米） */
+  leftoverMeters?: number
+  /** 卷筒：每个切断段的用量、断点与金额 */
+  rollSegments?: RollSegment[]
 }
 
 export interface Task {
@@ -145,6 +195,9 @@ export interface Leftover {
   priceCents: number
   createdAt: number
   usedCount: number
+  kind?: PaperKind
+  /** 卷筒余料用尽后接续的新整卷规格 */
+  parentRoll?: Paper
 }
 
 export interface Settings {

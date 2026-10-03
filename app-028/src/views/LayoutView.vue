@@ -15,7 +15,7 @@ import {
   sheetsOf,
   photoVersion,
 } from '../store'
-import { comparePapers, computeCost } from '../logic/cost'
+import { comparePapers, computeCostForSheets } from '../logic/cost'
 import { findPhotoSize, groupsFromTask, resolvePaper, sizeLabel } from '../logic/library'
 import { formatCents, formatPercent } from '../logic/units'
 import type { PaperCompare } from '../logic/cost'
@@ -33,7 +33,14 @@ const localMsg = ref('')
 const paper = computed(() => (task.value ? resolvePaper(task.value, allPapers.value) : allPapers.value[0]))
 const sheets = computed(() => (task.value ? sheetsOf(task.value) : []))
 const sheet = computed(() => sheets.value[Math.min(activeSheet.value, Math.max(0, sheets.value.length - 1))])
-const cost = computed(() => (task.value?.result ? computeCost(paper.value, task.value.result) : undefined))
+const cost = computed(() =>
+  paper.value && sheets.value.length
+    ? computeCostForSheets(paper.value, sheets.value, {
+        marginMm: paper.value.marginMm,
+        safeEdgeMm: task.value?.safeEdgeMm ?? 0,
+      })
+    : undefined,
+)
 const totalPhotos = computed(() =>
   sheets.value.reduce((acc, s) => acc + s.placements.length, 0),
 )
@@ -63,7 +70,8 @@ const scale = computed(() => {
   const p = paper.value
   const maxW = 900
   const maxH = 640
-  return Math.max(0.6, Math.min(3, Math.min(maxW / p.wMm, maxH / p.hMm)))
+  const h = sheets.value[activeSheet.value]?.physicalHeightMm ?? p.hMm
+  return Math.max(0.6, Math.min(3, Math.min(maxW / p.wMm, maxH / h)))
 })
 
 const comparisons = ref<PaperCompare[]>([])
@@ -229,6 +237,29 @@ function registerAllWaste() {
   for (const r of s.wasteRects) registerWaste(r.w, r.h)
 }
 
+function registerRollLeftover() {
+  const t = task.value
+  const seg = sheet.value?.roll
+  if (!t || !seg || seg.fullRollConsumed) return
+  const fullRoll = paper.value.parentRoll ?? paper.value
+  const remainingValue = Math.round(
+    (seg.leftoverLengthMm / fullRoll.hMm) * fullRoll.priceCents,
+  )
+  addLeftover({
+    name: `${t.name} 卷筒余料（${paper.value.name}）`,
+    wMm: paper.value.wMm,
+    hMm: Math.round(seg.leftoverLengthMm * 10) / 10,
+    marginMm: paper.value.marginMm,
+    priceCents: remainingValue,
+    kind: 'roll',
+    parentRoll: paper.value.parentRoll ?? {
+      ...paper.value,
+      parentRoll: undefined,
+    },
+  })
+  localMsg.value = `已登记卷筒余料 ${(seg.leftoverLengthMm / 1000).toFixed(3)}m（折余价值 ${formatCents(remainingValue)}）`
+}
+
 function selectedInfo() {
   const t = task.value
   if (!t || selectedSeq.value < 0) return undefined
@@ -274,7 +305,7 @@ watch(
       <h1 style="margin: 0">{{ task.name }}</h1>
       <span class="badge brand">{{ paper.name }} {{ paper.wMm }}×{{ paper.hMm }}mm</span>
       <span class="badge">{{ totalPhotos }} 张照片</span>
-      <span class="badge">{{ sheets.length }} 张相纸</span>
+      <span class="badge">{{ paper.kind === 'roll' ? `${sheets.length} 卷/切段` : `${sheets.length} 张相纸` }}</span>
       <span class="badge">{{ totalSteps }} 刀（未合并 {{ rawSteps }} 刀）</span>
       <div class="spacer"></div>
       <button class="btn" @click="goto('cut')">裁切步骤 →</button>
@@ -309,7 +340,7 @@ watch(
               :class="{ primary: i === activeSheet }"
               @click="activeSheet = i"
             >
-              第 {{ i + 1 }} 张
+              第 {{ i + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}
             </button>
           </div>
           <div v-if="displaySheet" class="sheet-wrap">
@@ -335,7 +366,7 @@ watch(
         </div>
 
         <div class="card">
-          <h3>第 {{ activeSheet + 1 }} 张：照片清单（对号入座）</h3>
+          <h3>第 {{ activeSheet + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}：照片清单（对号入座）</h3>
           <table class="data">
             <thead>
               <tr>
@@ -380,7 +411,7 @@ watch(
           <UtilizationBar
             :value="task.result ? task.result.stats.avgUtilization : 0"
             label="整单平均利用率"
-            :detail="`${sheets.length} 张相纸，共 ${totalPhotos} 张照片`"
+            :detail="`${sheets.length} ${paper.kind === 'roll' ? '卷/切段' : '张相纸'}，共 ${totalPhotos} 张照片`"
           />
           <div class="kv" style="margin-top: 12px">
             <dt>排样耗时</dt>
@@ -423,11 +454,26 @@ watch(
 
         <div class="card">
           <h3>成本核算</h3>
+          <div v-if="paper.kind === 'roll'" class="note" style="margin-bottom: 8px">
+            算法：先按整卷连续送纸排样，再按本次实际占用长度横切计费；不先估长度分卷，避免估计偏短造成的额外卷首/卷尾边料。
+          </div>
           <div v-if="cost" class="kv">
             <dt>相纸单价</dt>
-            <dd>{{ formatCents(paper.priceCents) }}/张</dd>
-            <dt>用纸张数</dt>
-            <dd>{{ cost.sheets }}</dd>
+            <dd>
+              {{
+                paper.kind === 'roll'
+                  ? `${formatCents(cost.priceCentsPerMeter ?? 0)}/m（整卷 ${paper.hMm / 1000}m）`
+                  : `${formatCents(paper.priceCents)}/张`
+              }}
+            </dd>
+            <dt>{{ paper.kind === 'roll' ? '本次用掉' : '用纸张数' }}</dt>
+            <dd>
+              {{
+                paper.kind === 'roll'
+                  ? `${(cost.usedMeters ?? 0).toFixed(3)}m / ${cost.sheets} 段；余料 ${(cost.leftoverMeters ?? 0).toFixed(3)}m`
+                  : cost.sheets
+              }}
+            </dd>
             <dt>总材料成本</dt>
             <dd>{{ formatCents(cost.totalCents) }}</dd>
             <dt>每张照片摊薄</dt>
@@ -477,9 +523,35 @@ watch(
           </div>
         </div>
 
+        <div v-if="paper.kind === 'roll'" class="card">
+          <h3>第 {{ activeSheet + 1 }} 卷/段：分卷与余料</h3>
+          <div v-if="sheet?.roll" class="kv">
+            <dt>供给来源</dt>
+            <dd>{{ sheet.roll.supplyLeftover ? '登记余料卷' : '新整卷' }}</dd>
+            <dt>本卷用掉</dt>
+            <dd>{{ (sheet.roll.usedLengthMm / 1000).toFixed(3) }}m</dd>
+            <dt>横切断点</dt>
+            <dd>y = {{ sheet.roll.crossCutAtMm.toFixed(1) }}mm</dd>
+            <dt>用后余料</dt>
+            <dd>
+              {{ sheet.roll.fullRollConsumed ? '0m（整卷刚好用尽，不产生余料）' : `${(sheet.roll.leftoverLengthMm / 1000).toFixed(3)}m` }}
+            </dd>
+            <dt>本段金额</dt>
+            <dd>{{ formatCents(sheet.roll.costCents) }}</dd>
+          </div>
+          <button
+            v-if="sheet?.roll && !sheet.roll.fullRollConsumed"
+            class="btn small"
+            style="margin-top: 8px"
+            @click="registerRollLeftover"
+          >
+            登记这段卷筒余料，下次接着用
+          </button>
+        </div>
+
         <div class="card">
           <h3>
-            余料登记
+            纸边余料登记
             <button class="btn small" :disabled="!sheet?.wasteRects.length" @click="registerAllWaste">
               全部登记
             </button>

@@ -57,6 +57,22 @@ export function optionsFromTask(task: Task, paper: Paper): PackOptions {
     gapMm: task.gapMm,
     kerfMm: task.kerfMm,
     allowRotate: task.allowRotate,
+    continuousRoll: paper.kind === 'roll',
+    rollSupplies:
+      paper.kind === 'roll'
+        ? [
+            { lengthMm: paper.hMm, priceCents: paper.priceCents, leftover: Boolean(paper.parentRoll) },
+            ...(paper.parentRoll
+              ? [
+                  {
+                    lengthMm: paper.parentRoll.hMm,
+                    priceCents: paper.parentRoll.priceCents,
+                    leftover: false,
+                  },
+                ]
+              : []),
+          ]
+        : undefined,
   }
 }
 

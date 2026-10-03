@@ -29,7 +29,8 @@ const thumbs = computed(() => {
 
 const scale = computed(() => {
   const p = paper.value
-  return Math.max(0.6, Math.min(3, Math.min(900 / p.wMm, 640 / p.hMm)))
+  const h = sheets.value[activeSheet.value]?.physicalHeightMm ?? p.hMm
+  return Math.max(0.6, Math.min(3, Math.min(900 / p.wMm, 640 / h)))
 })
 
 function describe(s: CutStep | undefined, i: number) {
@@ -84,7 +85,7 @@ onBeforeUnmount(() => {
 const allStepsText = computed(() => {
   const lines: string[] = []
   for (const s of sheets.value) {
-    lines.push(`【第 ${s.index + 1} 张相纸】${paper.value.wMm}×${paper.value.hMm}mm，共 ${s.cutSteps.length} 刀`)
+    lines.push(`【第 ${s.index + 1} ${paper.value.kind === 'roll' ? '段' : '张'}相纸】${paper.value.wMm}×${(s.physicalHeightMm ?? paper.value.hMm).toFixed(1)}mm，共 ${s.cutSteps.length} 刀${s.roll ? `，横切断点 y=${s.roll.crossCutAtMm.toFixed(1)}mm` : ''}`)
     s.cutSteps.forEach((c, i) => {
       lines.push(`  ${describe({ ...c, sheetIndex: s.index }, i)}`)
     })
@@ -111,7 +112,7 @@ function goto(routeName: string) {
     <div class="row no-print">
       <h1 style="margin: 0">裁切步骤</h1>
       <span class="badge brand">{{ task.name }}</span>
-      <span class="badge">{{ sheets.length }} 张相纸</span>
+      <span class="badge">{{ paper.kind === 'roll' ? `${sheets.length} 卷/切段` : `${sheets.length} 张相纸` }}</span>
       <span class="badge">
         本张 {{ totalSteps }} 刀（未合并 {{ sheet?.rawCutCount ?? 0 }} 刀）
       </span>
@@ -141,7 +142,7 @@ function goto(routeName: string) {
               :class="{ primary: i === activeSheet }"
               @click="activeSheet = i"
             >
-              第 {{ i + 1 }} 张
+              第 {{ i + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}
             </button>
           </div>
           <div v-if="sheet" class="sheet-wrap">
@@ -179,7 +180,7 @@ function goto(routeName: string) {
         </div>
 
         <div class="card">
-          <h3>步骤清单（第 {{ activeSheet + 1 }} 张）</h3>
+          <h3>步骤清单（第 {{ activeSheet + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}）</h3>
           <div class="card-sub">点击任意一步可跳转高亮；相邻共边照片的切割线已合并成一条</div>
           <div class="steps">
             <div
@@ -216,7 +217,7 @@ function goto(routeName: string) {
     <div class="print-only">
       <h2>{{ task.name }} · 切割步骤清单</h2>
       <p class="mono">
-        相纸 {{ paper.name }} {{ paper.wMm }}×{{ paper.hMm }}mm ｜ 隙距 {{ task.gapMm }}mm ｜
+        相纸 {{ paper.name }} {{ paper.wMm }}×{{ paper.kind === 'roll' ? '连续卷筒' : `${paper.hMm}mm` }} ｜ 隙距 {{ task.gapMm }}mm ｜
         刀宽补偿 {{ task.kerfMm }}mm ｜ 安全边 {{ task.safeEdgeMm }}mm
       </p>
       <RulerScale unit="mm" :length-mm="100" />

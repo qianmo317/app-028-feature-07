@@ -31,6 +31,11 @@ const sizeForm = reactive({ name: '', wMm: 50, hMm: 70, rotateByDefault: false }
 const builtinPaperIds = new Set(BUILTIN_PAPERS.map((p) => p.id))
 const builtinSizeIds = new Set(BUILTIN_PHOTO_SIZES.map((s) => s.id))
 
+function setPaperKind(kind: 'sheet' | 'roll') {
+  paperForm.kind = kind
+  if (kind === 'roll' && paperForm.hMm < 1000) paperForm.hMm = 5000
+}
+
 function addPaper() {
   error.value = ''
   if (!paperForm.name.trim()) {
@@ -78,7 +83,7 @@ function inchHint(wMm: number, hMm: number): string {
     <div class="grid cols-2">
       <div class="card">
         <h3>相纸规格（{{ allPapers.length }}）</h3>
-        <div class="card-sub">单价用于成本核算；「卷筒」按整卷计价</div>
+        <div class="card-sub">卷筒单价填写整卷价格，排样与成本按实际用掉的米数折算；普通纸按每张计价</div>
         <table class="data">
           <thead>
             <tr>
@@ -97,10 +102,12 @@ function inchHint(wMm: number, hMm: number): string {
                 {{ p.name }}
                 <span v-if="p.kind === 'roll'" class="badge">卷筒</span>
               </td>
-              <td class="num">{{ p.wMm }} × {{ p.hMm }}</td>
+              <td class="num">{{ p.wMm }} × {{ p.kind === 'roll' ? p.hMm / 1000 + 'm' : p.hMm }}</td>
               <td class="num">{{ inchHint(p.wMm, p.hMm) }}</td>
               <td class="num">{{ p.marginMm }}mm</td>
-              <td class="num">{{ formatCents(p.priceCents) }}</td>
+              <td class="num">
+                {{ p.kind === 'roll' ? `${formatCents(p.priceCents / (p.hMm / 1000))}/m` : formatCents(p.priceCents) }}
+              </td>
               <td>
                 <span class="badge" :class="builtinPaperIds.has(p.id) ? '' : 'brand'">
                   {{ builtinPaperIds.has(p.id) ? '内置' : '自定义' }}
@@ -130,7 +137,7 @@ function inchHint(wMm: number, hMm: number): string {
             <input v-model.number="paperForm.wMm" type="number" min="10" step="0.1" />
           </label>
           <label class="field" style="max-width: 96px">
-            高 mm
+            {{ paperForm.kind === 'roll' ? '整卷长 mm' : '高 mm' }}
             <input v-model.number="paperForm.hMm" type="number" min="10" step="0.1" />
           </label>
           <label class="field" style="max-width: 110px">
@@ -138,12 +145,12 @@ function inchHint(wMm: number, hMm: number): string {
             <input v-model.number="paperForm.marginMm" type="number" min="0" step="0.5" />
           </label>
           <label class="field" style="max-width: 110px">
-            单价（分）
+            {{ paperForm.kind === 'roll' ? '整卷价格（分）' : '单价（分）' }}
             <input v-model.number="paperForm.priceCents" type="number" min="0" step="10" />
           </label>
           <label class="field" style="max-width: 110px">
             类型
-            <select v-model="paperForm.kind">
+            <select :value="paperForm.kind" @change="setPaperKind(($event.target as HTMLSelectElement).value as 'sheet' | 'roll')">
               <option value="sheet">单张</option>
               <option value="roll">卷筒</option>
             </select>
@@ -256,7 +263,7 @@ function inchHint(wMm: number, hMm: number): string {
         <tbody>
           <tr v-for="l in leftovers" :key="l.id">
             <td>{{ l.name }}</td>
-            <td class="num">{{ l.wMm }} × {{ l.hMm }}</td>
+            <td class="num">{{ l.wMm }} × {{ l.kind === 'roll' ? (l.hMm / 1000).toFixed(3) + 'm' : l.hMm }}</td>
             <td class="num">{{ l.usedCount }}</td>
             <td><button class="btn small danger" @click="removeLeftover(l.id)">删除</button></td>
           </tr>

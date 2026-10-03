@@ -16,11 +16,12 @@ export interface PngBuildInput {
 
 export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
   const { paper, sheet, dpi } = input
+  const physicalHeightMm = sheet.physicalHeightMm ?? paper.hMm
   const border = input.borderMm ?? 12
   const k = dpi / 25.4
   const canvas = document.createElement('canvas')
   canvas.width = Math.round(mmToPx(paper.wMm + border * 2, dpi))
-  canvas.height = Math.round(mmToPx(paper.hMm + border * 2, dpi))
+  canvas.height = Math.round(mmToPx(physicalHeightMm + border * 2, dpi))
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('无法创建 canvas 上下文')
   const X = (mm: number) => border * k + mm * k
@@ -32,7 +33,7 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
   // 纸张外框
   ctx.strokeStyle = '#9aa6b4'
   ctx.lineWidth = Math.max(1, 0.2 * k)
-  ctx.strokeRect(X(0), Y(0), paper.wMm * k, paper.hMm * k)
+  ctx.strokeRect(X(0), Y(0), paper.wMm * k, physicalHeightMm * k)
 
   // 毫米网格
   ctx.strokeStyle = '#eef1f6'
@@ -40,10 +41,10 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
   for (let x = 0; x <= paper.wMm; x += 10) {
     ctx.beginPath()
     ctx.moveTo(X(x), Y(0))
-    ctx.lineTo(X(x), Y(paper.hMm))
+    ctx.lineTo(X(x), Y(physicalHeightMm))
     ctx.stroke()
   }
-  for (let y = 0; y <= paper.hMm; y += 10) {
+  for (let y = 0; y <= physicalHeightMm; y += 10) {
     ctx.beginPath()
     ctx.moveTo(X(0), Y(y))
     ctx.lineTo(X(paper.wMm), Y(y))
@@ -56,7 +57,7 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
   ctx.setLineDash([4 * k, 3 * k])
   ctx.strokeStyle = '#c3ccd9'
   ctx.lineWidth = Math.max(1, 0.15 * k)
-  ctx.strokeRect(X(inset), Y(inset), (paper.wMm - 2 * inset) * k, (paper.hMm - 2 * inset) * k)
+  ctx.strokeRect(X(inset), Y(inset), (paper.wMm - 2 * inset) * k, (physicalHeightMm - 2 * inset) * k)
   ctx.restore()
 
   // 照片
@@ -134,8 +135,8 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
     if (c.axis === 'v') {
       ctx.moveTo(X(c.at), Y(0) - 4 * k)
       ctx.lineTo(X(c.at), Y(0) - 1 * k)
-      ctx.moveTo(X(c.at), Y(paper.hMm) + 1 * k)
-      ctx.lineTo(X(c.at), Y(paper.hMm) + 4 * k)
+      ctx.moveTo(X(c.at), Y(physicalHeightMm) + 1 * k)
+      ctx.lineTo(X(c.at), Y(physicalHeightMm) + 4 * k)
     } else {
       ctx.moveTo(X(0) - 4 * k, Y(c.at))
       ctx.lineTo(X(0) - 1 * k, Y(c.at))
@@ -146,7 +147,7 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
   }
 
   // 100mm 校验尺（画在纸张下方的标注带里）
-  const rulerY = Y(paper.hMm) + border * k * 0.55
+  const rulerY = Y(physicalHeightMm) + border * k * 0.55
   ctx.strokeStyle = '#1f2733'
   ctx.lineWidth = Math.max(1, 0.25 * k)
   ctx.beginPath()
@@ -164,7 +165,7 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
   ctx.textAlign = 'left'
   ctx.textBaseline = 'bottom'
   ctx.fillText('100mm ruler (print at 100%)', X(0), rulerY - 4 * k)
-  ctx.fillText(`Sheet ${sheet.index + 1}/${input.task.result?.sheets.length ?? 1}  ${paper.wMm}x${paper.hMm}mm`, X(104), rulerY)
+  ctx.fillText(`Sheet ${sheet.index + 1}/${input.task.result?.sheets.length ?? 1}  ${paper.wMm}x${physicalHeightMm}mm`, X(104), rulerY)
 
   // 页眉 / 落款
   const sizeMm = Math.max(1.6, Math.min(4, paper.marginMm * 0.5))
@@ -179,7 +180,7 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
     ctx.fillText(
       input.task.footerText.trim(),
       X(paper.wMm / 2),
-      Y(paper.hMm - paper.marginMm / 2),
+      Y(physicalHeightMm - paper.marginMm / 2),
     )
   }
 

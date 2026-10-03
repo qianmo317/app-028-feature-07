@@ -67,7 +67,7 @@ async function buildSheetPage(
 ): Promise<PageSpec> {
   const { paper } = input
   const W = paper.wMm
-  const H = paper.hMm
+  const H = sheet.physicalHeightMm ?? paper.hMm
   const px = (mm: number) => mm * S
   const py = (mm: number) => (H - mm) * S
   const head: string[] = []
@@ -209,13 +209,21 @@ async function buildInfoPage(input: PdfBuildInput): Promise<PageSpec> {
   body.push(text(px(15), py(y + 8), '100 mm ruler - measure this line after printing', 8))
 
   const lines: string[] = []
-  lines.push(`任务：${input.task.name}｜相纸：${input.paper.name} ${input.paper.wMm}×${input.paper.hMm}mm`)
+  lines.push(`任务：${input.task.name}｜相纸：${input.paper.name} ${input.paper.wMm}×${input.paper.kind === 'roll' ? '连续卷筒' : `${input.paper.hMm}mm`}`)
   lines.push(
-    `隙距 ${input.task.gapMm}mm｜刀宽补偿 ${input.task.kerfMm}mm｜安全边 ${input.task.safeEdgeMm}mm｜共 ${input.sheets.length} 张相纸`,
+    `隙距 ${input.task.gapMm}mm｜刀宽补偿 ${input.task.kerfMm}mm｜安全边 ${input.task.safeEdgeMm}mm｜共 ${input.sheets.length} ${input.paper.kind === 'roll' ? '个切段' : '张相纸'}`,
   )
+  if (input.paper.kind === 'roll') {
+    const usedMm = input.sheets.reduce((acc, s) => acc + (s.physicalHeightMm ?? 0), 0)
+    lines.push(`卷筒本次总送纸 ${(usedMm / 1000).toFixed(3)}m；横切点见每段末刀`)
+  }
   lines.push('')
   for (const s of input.sheets) {
-    lines.push(`【第 ${s.index + 1} 张】共 ${s.cutSteps.length} 刀（未合并 ${s.rawCutCount} 刀）`)
+    lines.push(
+      `【第 ${s.index + 1} 段】段长 ${(s.physicalHeightMm ?? input.paper.hMm).toFixed(1)}mm，共 ${s.cutSteps.length} 刀（未合并 ${s.rawCutCount} 刀）${
+        s.roll ? `，横切断点 y=${s.roll.crossCutAtMm.toFixed(1)}mm` : ''
+      }`,
+    )
     s.cutSteps.forEach((c, i) => {
       if (c.axis === 'v') {
         lines.push(

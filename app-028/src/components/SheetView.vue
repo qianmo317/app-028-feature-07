@@ -57,11 +57,12 @@ const textXs = computed(() => (props.unit === 'mm' ? '2.1mm' : '9px'))
 
 const inset = computed(() => props.paper.marginMm + props.safeEdgeMm)
 const usableW = computed(() => Math.max(0, props.paper.wMm - 2 * inset.value))
-const usableH = computed(() => Math.max(0, props.paper.hMm - 2 * inset.value))
+const displayHeightMm = computed(() => props.sheet.physicalHeightMm ?? props.paper.hMm)
+const usableH = computed(() => Math.max(0, displayHeightMm.value - 2 * inset.value))
 
 const paperStyle = computed(() => ({
   width: u(props.paper.wMm),
-  height: u(props.paper.hMm),
+  height: u(displayHeightMm.value),
 }))
 
 const gridStyle = computed(() => {
@@ -201,7 +202,7 @@ const showDetail = computed(() => props.scale >= 1.6 || props.unit === 'mm')
       class="cut-label"
       :style="{
         left: '50%',
-        top: u(paper.hMm - paper.marginMm / 2),
+        top: u(displayHeightMm - paper.marginMm / 2),
         transform: 'translate(-50%, -50%)',
         fontSize: headerFontSize,
       }"

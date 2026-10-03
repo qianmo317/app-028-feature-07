@@ -3,7 +3,7 @@
  */
 import { validateCutSequence, type CutLine, type Rect } from './guillotine'
 import { BUILTIN_PAPERS, BUILTIN_PHOTO_SIZES } from './library'
-import { pack, sheetsFromPlacements, usableRegion, type PackGroup, type PackOptions } from './packer'
+import { pack, packRollForPaper, sheetsFromPlacements, usableRegion, type PackGroup, type PackOptions } from './packer'
 import { buildPdf } from './pdf'
 import { MM_TO_PT, mmToPt, mmToPx, pxToMm } from './units'
 import type { Paper, Placement, Sheet } from './types'
@@ -482,6 +482,55 @@ function assertPerformance(): AssertionResult {
   }
 }
 
+/** ⑧ 卷筒：按连续送纸排样、按实际长度切段计费；覆盖刚好用尽与差一点跨卷 */
+function assertRollMeterCost(): AssertionResult {
+  const t0 = performance.now()
+  const problems: string[] = []
+  const opts: PackOptions = {
+    paperW: 152,
+    paperH: 1000,
+    marginMm: 3,
+    safeEdgeMm: 3,
+    gapMm: 0,
+    kerfMm: 0,
+    allowRotate: false,
+    continuousRoll: true,
+    rollSupplies: [{ lengthMm: 1000, priceCents: 3000, leftover: false }],
+  }
+  const group = (copies: number): PackGroup[] => [
+    { itemId: 'a', copies, photoW: 102, photoH: 99.4, allowRotate: false, keepTogether: false },
+  ]
+  const exact = packRollForPaper(group(10), opts).result
+  const overflow = packRollForPaper(group(11), opts).result
+  if (exact.sheets.length !== 1 || exact.sheets[0].roll?.leftoverLengthMm !== 0 || !exact.sheets[0].roll?.fullRollConsumed) {
+    problems.push('刚好排满整卷时应只有 1 段、余料 0m、标记整卷用尽')
+  }
+  if (exact.sheets[0].roll?.costCents !== 3000) problems.push('整卷用尽时应按整卷价格 3000 分计')
+  if (overflow.sheets.length !== 2) {
+    problems.push(`第 11 张差一点放不下时应分成 2 段，实际 ${overflow.sheets.length} 段`)
+  }
+  const first = overflow.sheets[0].roll
+  const second = overflow.sheets[1].roll
+  if (!first?.fullRollConsumed || first.leftoverLengthMm !== 0) problems.push('跨卷时第一段必须是刚用尽的整卷')
+  if (!second || second.usedLengthMm <= 0 || second.leftoverLengthMm <= 0) problems.push('跨卷时第二段应记录用掉长度和余料')
+  const totalCents = (first?.costCents ?? 0) + (second?.costCents ?? 0)
+  const expectedCents = Math.round((((first?.usedLengthMm ?? 0) + (second?.usedLengthMm ?? 0)) / 1000) * 3000)
+  if (totalCents !== expectedCents) problems.push('各段金额相加不等于总长度折算出的金额')
+  const hasBoundaryCut = overflow.sheets.some((s) =>
+    s.cutSteps.some((c) => c.axis === 'h' && Math.abs(c.at - (s.physicalHeightMm ?? 0)) < EPS),
+  )
+  if (!hasBoundaryCut) problems.push('切段清单缺少从整卷断开的横切线')
+  return {
+    id: 'roll-meter',
+    title: '⑧ 卷筒：连续排样后按实际米数切段计费，覆盖余料 0 与差一点跨卷',
+    pass: problems.length === 0,
+    detail: problems.length
+      ? problems.join('；')
+      : `10 张 99.4mm 高照片刚好用尽 1m（余料 0m、¥30.00）；第 11 张触发第 2 卷（第 1 卷 1m 用尽 + 第 2 卷 ${((second?.usedLengthMm ?? 0) / 1000).toFixed(3)}m），各卷金额合计 ${totalCents} 分`,
+    ms: Math.round(performance.now() - t0),
+  }
+}
+
 export async function runSelfTest(): Promise<AssertionResult[]> {
   const results: AssertionResult[] = []
   results.push(assertGuillotine())
@@ -501,5 +550,6 @@ export async function runSelfTest(): Promise<AssertionResult[]> {
     })
   }
   results.push(assertPerformance())
+  results.push(assertRollMeterCost())
   return results
 }

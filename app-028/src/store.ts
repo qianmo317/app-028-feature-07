@@ -9,7 +9,7 @@ import {
   optionsFromTask,
   resolvePaper,
 } from './logic/library'
-import { pack, sheetsFromPlacements } from './logic/packer'
+import { pack, packRollForPaper, sheetsFromPlacements } from './logic/packer'
 import { loadJSON, saveJSON } from './logic/storage'
 import type {
   Leftover,
@@ -123,7 +123,15 @@ export function createTask(partial: Partial<Task> = {}): Task {
     id: newId('task'),
     name: partial.name ?? `拼版任务 ${tasks.value.length + 1}`,
     paperId: partial.paperId ?? 'p5x7',
-    customPaper: partial.customPaper,
+    customPaper: partial.customPaper
+      ? {
+          ...partial.customPaper,
+          parentRoll:
+            partial.customPaper.kind === 'roll' && !partial.customPaper.parentRoll
+              ? { ...partial.customPaper, parentRoll: undefined }
+              : partial.customPaper.parentRoll,
+        }
+      : undefined,
     items: partial.items ?? [],
     gapMm: partial.gapMm ?? settings.value.gapMm,
     kerfMm: partial.kerfMm ?? settings.value.kerfMm,
@@ -153,7 +161,10 @@ export function runPack(task: Task): string | undefined {
     task.result = undefined
     return '照片清单为空，请先添加照片尺寸与数量'
   }
-  const out = pack(groups, optionsFromTask(task, paper))
+  const packOptions = optionsFromTask(task, paper)
+  const out = paper.kind === 'roll'
+    ? packRollForPaper(groups, packOptions)
+    : pack(groups, packOptions)
   if (out.error) {
     task.result = undefined
     return out.error
@@ -168,7 +179,11 @@ export function runPack(task: Task): string | undefined {
 export function sheetsOf(task: Task): Sheet[] {
   if (task.manual) {
     const paper = resolvePaper(task, allPapers.value)
-    const count = Math.max(1, task.result?.sheets.length ?? 1)
+    const count = Math.max(
+      1,
+      task.result?.sheets.length ?? 1,
+      ...task.manual.placements.map((p) => p.sheetIndex + 1),
+    )
     return sheetsFromPlacements(task.manual.placements, optionsFromTask(task, paper), count).sheets
   }
   return task.result?.sheets ?? []
@@ -182,7 +197,11 @@ export function manualPlacementsOf(task: Task): Placement[] {
 /** 写入手工微调结果并做增量校验（不重新排样） */
 export function setManual(task: Task, placements: Placement[]): void {
   const paper = resolvePaper(task, allPapers.value)
-  const count = Math.max(1, task.result?.sheets.length ?? 1)
+  const count = Math.max(
+    1,
+    task.result?.sheets.length ?? 1,
+    ...placements.map((p) => p.sheetIndex + 1),
+  )
   const t0 = performance.now()
   const { sheets, errors } = sheetsFromPlacements(placements, optionsFromTask(task, paper), count)
   const ms = performance.now() - t0

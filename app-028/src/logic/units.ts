@@ -50,6 +50,10 @@ export function formatCents(cents: number): string {
   return `¥${(cents / 100).toFixed(2)}`
 }
 
+export function formatMeters(mm: number, digits = 2): string {
+  return `${round(mm / 1000, digits)}m`
+}
+
 export function formatPercent(v: number, digits = 1): string {
   return `${(v * 100).toFixed(digits)}%`
 }

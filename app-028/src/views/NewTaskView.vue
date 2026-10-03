@@ -36,6 +36,7 @@ const draft = reactive({
     marginMm: 3,
     priceCents: 200,
     kind: 'sheet',
+    parentRoll: undefined,
   } as Paper,
   items: [] as Item[],
   gapMm: settings.value.gapMm,
@@ -160,10 +161,11 @@ function useLeftover(id: string) {
     hMm: l.hMm,
     marginMm: l.marginMm,
     priceCents: l.priceCents,
-    kind: 'sheet',
+    kind: l.kind ?? 'sheet',
+    parentRoll: l.parentRoll,
   }
   markLeftoverUsed(id)
-  hint.value = `已使用余料「${l.name}」${l.wMm}×${l.hMm}mm`
+  hint.value = `已使用${l.kind === 'roll' ? '卷筒' : ''}余料「${l.name}」${l.wMm}×${l.kind === 'roll' ? (l.hMm / 1000).toFixed(3) + 'm' : `${l.hMm}mm`}`
 }
 
 function addSize() {
@@ -248,7 +250,7 @@ function taskPaperName(t: Task) {
               相纸
               <select v-model="draft.paperId">
                 <option v-for="p in allPapers" :key="p.id" :value="p.id">
-                  {{ p.name }} · {{ p.wMm }}×{{ p.hMm }}mm · {{ formatCents(p.priceCents) }}/张
+                  {{ p.name }} · {{ p.wMm }}×{{ p.kind === 'roll' ? `${p.hMm / 1000}m` : `${p.hMm}mm` }} · {{ formatCents(p.kind === 'roll' ? (p.priceCents / (p.hMm / 1000)) : p.priceCents) }}{{ p.kind === 'roll' ? '/m' : '/张' }}
                 </option>
                 <option value="custom">自定义相纸…</option>
               </select>
@@ -259,7 +261,7 @@ function taskPaperName(t: Task) {
                 <input v-model.number="draft.customPaper.wMm" type="number" min="10" step="0.1" />
               </label>
               <label class="field">
-                高 mm
+                {{ draft.customPaper.kind === 'roll' ? '整卷长 mm' : '高 mm' }}
                 <input v-model.number="draft.customPaper.hMm" type="number" min="10" step="0.1" />
               </label>
               <label class="field">
@@ -267,8 +269,15 @@ function taskPaperName(t: Task) {
                 <input v-model.number="draft.customPaper.marginMm" type="number" min="0" step="0.5" />
               </label>
               <label class="field">
-                单价（分）
+                {{ draft.customPaper.kind === 'roll' ? '整卷价格（分）' : '单价（分）' }}
                 <input v-model.number="draft.customPaper.priceCents" type="number" min="0" step="10" />
+              </label>
+              <label class="field">
+                类型
+                <select v-model="draft.customPaper.kind">
+                  <option value="sheet">单张</option>
+                  <option value="roll">卷筒</option>
+                </select>
               </label>
             </div>
             <div class="kv">
@@ -276,8 +285,8 @@ function taskPaperName(t: Task) {
               <dd>{{ currentPaper.wMm }} × {{ currentPaper.hMm }} mm</dd>
               <dt>可用区</dt>
               <dd>{{ usableText }}</dd>
-              <dt>单张成本</dt>
-              <dd>{{ formatCents(currentPaper.priceCents) }}</dd>
+              <dt>{{ currentPaper.kind === 'roll' ? '每米价格' : '单张成本' }}</dt>
+              <dd>{{ currentPaper.kind === 'roll' ? formatCents(currentPaper.priceCents / (currentPaper.hMm / 1000)) + '/m' : formatCents(currentPaper.priceCents) }}</dd>
             </div>
             <div class="grid cols-2">
               <label class="field">
@@ -331,7 +340,7 @@ function taskPaperName(t: Task) {
             <tbody>
               <tr v-for="l in leftovers" :key="l.id">
                 <td>{{ l.name }}</td>
-                <td class="num">{{ l.wMm }}×{{ l.hMm }}</td>
+                <td class="num">{{ l.wMm }}×{{ l.kind === 'roll' ? (l.hMm / 1000).toFixed(3) + 'm' : l.hMm }}</td>
                 <td class="num">{{ l.usedCount }}</td>
                 <td><button class="btn small" @click="useLeftover(l.id)">用作相纸</button></td>
               </tr>
@@ -475,7 +484,7 @@ function taskPaperName(t: Task) {
                 <th>任务</th>
                 <th>相纸</th>
                 <th class="num">照片</th>
-                <th class="num">张数</th>
+                <th class="num">张数/卷段</th>
                 <th class="num">利用率</th>
                 <th></th>
               </tr>
