@@ -1,4 +1,6 @@
 /** 尺寸库查询与任务 -> 排样输入 的转换 */
+import { paperPriceUnit } from './cost'
+export { paperPriceUnit }
 import papersJson from '../data/papers.json'
 import type { PackGroup, PackOptions } from './packer'
 import type { Item, Paper, PaperTemplate, PhotoSize, Task } from './types'
@@ -57,6 +59,7 @@ export function optionsFromTask(task: Task, paper: Paper): PackOptions {
     gapMm: task.gapMm,
     kerfMm: task.kerfMm,
     allowRotate: task.allowRotate,
+    variableLength: paper.kind === 'roll' && paperPriceUnit(paper) === 'meter',
   }
 }
 

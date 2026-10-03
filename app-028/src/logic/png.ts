@@ -116,6 +116,19 @@ export async function buildSheetPng(input: PngBuildInput): Promise<Blob> {
     ctx.stroke()
   }
   ctx.restore()
+  if (sheet.roll) {
+    ctx.strokeStyle = '#c0392b'
+    ctx.lineWidth = Math.max(1, 0.5 * k)
+    ctx.beginPath()
+    ctx.moveTo(X(0), Y(paper.hMm))
+    ctx.lineTo(X(paper.wMm), Y(paper.hMm))
+    ctx.stroke()
+    ctx.fillStyle = '#c0392b'
+    ctx.font = `${Math.max(7, 2.4 * k)}px system-ui, sans-serif`
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'bottom'
+    ctx.fillText(`Roll cut ${paper.hMm.toFixed(1)}mm`, X(paper.wMm), Y(paper.hMm) - 1 * k)
+  }
   ctx.fillStyle = '#c0392b'
   ctx.textAlign = 'left'
   ctx.textBaseline = 'bottom'

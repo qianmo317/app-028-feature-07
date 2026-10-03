@@ -19,6 +19,7 @@ const playing = ref(false)
 let timer: number | undefined
 
 const sheet = computed(() => sheets.value[Math.min(activeSheet.value, sheets.value.length - 1)])
+const displayPaper = computed(() => (sheet.value?.roll ? { ...paper.value, hMm: sheet.value.roll.usedLengthMm } : paper.value))
 const steps = computed(() => sheet.value?.cutSteps ?? [])
 const totalSteps = computed(() => steps.value.length)
 
@@ -28,7 +29,7 @@ const thumbs = computed(() => {
 })
 
 const scale = computed(() => {
-  const p = paper.value
+  const p = displayPaper.value
   return Math.max(0.6, Math.min(3, Math.min(900 / p.wMm, 640 / p.hMm)))
 })
 
@@ -84,10 +85,14 @@ onBeforeUnmount(() => {
 const allStepsText = computed(() => {
   const lines: string[] = []
   for (const s of sheets.value) {
-    lines.push(`【第 ${s.index + 1} 张相纸】${paper.value.wMm}×${paper.value.hMm}mm，共 ${s.cutSteps.length} 刀`)
+    const h = s.roll ? s.roll.usedLengthMm : paper.value.hMm
+    lines.push(`【第 ${s.index + 1} 张相纸】${paper.value.wMm}×${h}mm，共 ${s.cutSteps.length} 刀${s.roll ? `，卷筒横断 1 刀` : ''}`)
     s.cutSteps.forEach((c, i) => {
       lines.push(`  ${describe({ ...c, sheetIndex: s.index }, i)}`)
     })
+    if (s.roll) {
+      lines.push(`  ${s.cutSteps.length + 1}. 卷筒横断 y=${s.roll.cutAtMm.toFixed(1)}mm，从 x=0 贯通到 x=${paper.value.wMm.toFixed(1)}mm（余料 ${s.roll.leftoverLengthMm.toFixed(1)}mm${s.roll.fullyUsed ? '，刚好为零' : ''}）`)
+    }
   }
   return lines.join('\n')
 })
@@ -111,7 +116,7 @@ function goto(routeName: string) {
     <div class="row no-print">
       <h1 style="margin: 0">裁切步骤</h1>
       <span class="badge brand">{{ task.name }}</span>
-      <span class="badge">{{ sheets.length }} 张相纸</span>
+      <span class="badge">{{ paper.kind === 'roll' ? `${sheets.length} 卷/段` : `${sheets.length} 张相纸` }}</span>
       <span class="badge">
         本张 {{ totalSteps }} 刀（未合并 {{ sheet?.rawCutCount ?? 0 }} 刀）
       </span>
@@ -141,13 +146,14 @@ function goto(routeName: string) {
               :class="{ primary: i === activeSheet }"
               @click="activeSheet = i"
             >
-              第 {{ i + 1 }} 张
+              第 {{ i + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}
             </button>
           </div>
           <div v-if="sheet" class="sheet-wrap">
             <SheetView
               :sheet="sheet"
               :paper="paper"
+              :effective-paper="displayPaper"
               :safe-edge-mm="task.safeEdgeMm"
               :scale="scale"
               :highlight="step < totalSteps ? step : -1"
@@ -179,7 +185,7 @@ function goto(routeName: string) {
         </div>
 
         <div class="card">
-          <h3>步骤清单（第 {{ activeSheet + 1 }} 张）</h3>
+          <h3>步骤清单（第 {{ activeSheet + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}）</h3>
           <div class="card-sub">点击任意一步可跳转高亮；相邻共边照片的切割线已合并成一条</div>
           <div class="steps">
             <div
@@ -193,6 +199,10 @@ function goto(routeName: string) {
               <span>{{ describe(c, i) }}</span>
               <span v-if="c.merged" class="badge ok">共边合并</span>
             </div>
+          </div>
+          <div v-if="sheet?.roll" class="note ok" style="margin-top: 8px">
+            最后卷筒横断：y={{ sheet.roll.cutAtMm.toFixed(1) }}mm；余料 {{ (sheet.roll.leftoverLengthMm / 1000).toFixed(3) }}m
+            <template v-if="sheet.roll.fullyUsed">（刚好为零，本卷用尽）</template>
           </div>
         </div>
 
@@ -216,7 +226,7 @@ function goto(routeName: string) {
     <div class="print-only">
       <h2>{{ task.name }} · 切割步骤清单</h2>
       <p class="mono">
-        相纸 {{ paper.name }} {{ paper.wMm }}×{{ paper.hMm }}mm ｜ 隙距 {{ task.gapMm }}mm ｜
+        相纸 {{ paper.name }} {{ paper.wMm }}×{{ paper.kind === 'roll' ? (sheet?.roll?.usedLengthMm ?? paper.hMm) : paper.hMm }}mm ｜ 隙距 {{ task.gapMm }}mm ｜
         刀宽补偿 {{ task.kerfMm }}mm ｜ 安全边 {{ task.safeEdgeMm }}mm
       </p>
       <RulerScale unit="mm" :length-mm="100" />

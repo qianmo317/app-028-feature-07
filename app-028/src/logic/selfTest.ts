@@ -4,6 +4,7 @@
 import { validateCutSequence, type CutLine, type Rect } from './guillotine'
 import { BUILTIN_PAPERS, BUILTIN_PHOTO_SIZES } from './library'
 import { pack, sheetsFromPlacements, usableRegion, type PackGroup, type PackOptions } from './packer'
+import { computeCost, paperPriceUnit, rollLengthCents } from './cost'
 import { buildPdf } from './pdf'
 import { MM_TO_PT, mmToPt, mmToPx, pxToMm } from './units'
 import type { Paper, Placement, Sheet } from './types'
@@ -342,7 +343,103 @@ function assertCoEdgeMerge(): AssertionResult {
   }
 }
 
-/** ⑥ 1:1 导出：PDF 页面尺寸 = 相纸实际尺寸，校验尺 100mm，照片尺寸误差 ≤0.5mm */
+/** ⑥ 卷筒纸：连续送纸按实际长度切段、按米计价，覆盖余料为零/差一点跨卷/连续送纸 */
+function assertRollMeterBilling(): AssertionResult {
+  const t0 = performance.now()
+  const problems: string[] = []
+  const paper: Paper = {
+    id: 'roll-test',
+    name: '测试卷筒',
+    wMm: 100,
+    hMm: 100,
+    marginMm: 0,
+    priceCents: 1000,
+    kind: 'roll',
+    priceUnit: 'meter',
+  }
+  const base = {
+    paperW: 100,
+    paperH: 100,
+    marginMm: 0,
+    safeEdgeMm: 0,
+    gapMm: 0,
+    kerfMm: 0,
+    allowRotate: false,
+    variableLength: true,
+  }
+
+  // 余料刚好为零：5 张 20×20，单卷 100mm 内 5 列同高，切段恰好在卷尾。
+  const exact = pack(
+    [{ itemId: 'exact', copies: 5, photoW: 20, photoH: 20, allowRotate: false, keepTogether: false }],
+    base,
+  )
+  const exactSheet = exact.result.sheets[0]
+  if (exact.error || exact.result.sheets.length !== 1 || !exactSheet?.roll) {
+    problems.push(`余料为零用例分卷错误：${exact.error ?? exact.result.sheets.length}`)
+  } else {
+    if (Math.abs(exactSheet.roll.usedLengthMm - 20) > EPS) problems.push('单卷内横向连续送纸不应按整卷 100mm 计费')
+    if (exactSheet.roll.leftoverLengthMm !== 80) problems.push('5 张 20×20 在 100mm 幅宽内只应用 20mm，余料应为 80mm')
+    if (exactSheet.roll.fullyUsed) problems.push('20mm 切段不应判为卷尽')
+  }
+
+  // 让连续高度恰好到 100mm：幅宽只能放 1 列、5 张高度 20mm。
+  const exactTail = pack(
+    [{ itemId: 'tail', copies: 5, photoW: 100, photoH: 20, allowRotate: false, keepTogether: false }],
+    base,
+  )
+  const tailSheet = exactTail.result.sheets[0]
+  if (!tailSheet?.roll || Math.abs(tailSheet.roll.usedLengthMm - 100) > EPS || !tailSheet.roll.fullyUsed) {
+    problems.push('高度恰好到卷尾时必须余料为 0 且标记 fullyUsed')
+  }
+
+  // 只差一点点跨卷：第一卷能放 5 张，第 6 张必须新卷；不能把 1mm 也计给第一卷。
+  const cross = pack(
+    [{ itemId: 'cross', copies: 6, photoW: 100, photoH: 19, allowRotate: false, keepTogether: false }],
+    { ...base, paperH: 100 },
+  )
+  if (cross.result.sheets.length !== 2) {
+    problems.push(`6×19mm 应分成 2 卷，实际 ${cross.result.sheets.length}`)
+  } else {
+    const [a, b] = cross.result.sheets.map((s) => s.roll!)
+    if (Math.abs(a.usedLengthMm - 95) > EPS || Math.abs(a.leftoverLengthMm - 5) > EPS) {
+      problems.push(`第一卷应用 95mm、余 5mm，实际用 ${a?.usedLengthMm}mm`)
+    }
+    if (Math.abs(b.usedLengthMm - 19) > EPS || b.rollNumber !== 2) {
+      problems.push(`差一点放不下时必须跨到下一卷并从 19mm 切断，实际 ${b?.usedLengthMm}mm`)
+    }
+    const cost = computeCost(paper, cross.result)
+    if (Math.abs((cost.totalUsedMeters ?? 0) - 0.114) > 1e-6) problems.push('总米数应为 0.114m')
+    if (Math.abs(cost.totalCents - rollLengthCents(paper, 114)) > 1e-6) problems.push('金额必须随实际 114mm 重算')
+  }
+
+  // 同一卷连续送纸：能横向排下时只有一个切段；固定先按 100mm 切段会得到更多段且不会更省。
+  const continuous = pack(
+    [{ itemId: 'cont', copies: 10, photoW: 25, photoH: 40, allowRotate: false, keepTogether: false }],
+    base,
+  )
+  const continuousLengths = continuous.result.sheets.map((s) => s.roll?.usedLengthMm ?? -1)
+  if (
+    continuous.result.sheets.length !== 2 ||
+    continuousLengths.length !== 2 ||
+    Math.abs(continuousLengths[0] - 80) > EPS ||
+    Math.abs(continuousLengths[1] - 40) > EPS
+  ) {
+    problems.push('同一卷应连续送纸直到卷界：10 张 25×40 应排成 80mm+40mm 两段，而不是先按固定 100mm 切段')
+  }
+  if (paperPriceUnit(paper) !== 'meter') problems.push('卷筒价格单位必须按米')
+
+  return {
+    id: 'roll-meter',
+    title: '⑧ 卷筒纸：按实际长度分卷切断、按米计价，覆盖零余料/跨卷/连续送纸',
+    pass: problems.length === 0,
+    detail: problems.length
+      ? problems.join('；')
+      : '20×20×5 在同一卷横排只用 20mm；100×20×5 恰好用尽 100mm（余料 0）；6×19mm 为 95+19 两卷、共 0.114m；连续送纸为 80+40mm，优于固定 100+20mm 切段',
+    ms: Math.round(performance.now() - t0),
+  }
+}
+
+/** ⑦ 1:1 导出：PDF 页面尺寸 = 相纸实际尺寸，校验尺 100mm，照片尺寸误差 ≤0.5mm */
 async function assertExport1to1(): Promise<AssertionResult> {
   const t0 = performance.now()
   const problems: string[] = []
@@ -489,6 +586,7 @@ export async function runSelfTest(): Promise<AssertionResult[]> {
   results.push(assertSafeEdgeAndKerf())
   results.push(assertUnits())
   results.push(assertCoEdgeMerge())
+  results.push(assertRollMeterBilling())
   try {
     results.push(await assertExport1to1())
   } catch (e) {

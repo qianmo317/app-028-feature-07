@@ -1,15 +1,20 @@
 /** 数据模型（对应规格书 §7） */
 
 export type PaperKind = 'sheet' | 'roll'
+export type PriceUnit = 'sheet' | 'meter'
 
 export interface Paper {
   id: string
   name: string
+  /** 单张纸为高度；卷筒纸为固定幅宽 */
   wMm: number
+  /** 单张纸为高度；卷筒纸为一整卷的长度 */
   hMm: number
   marginMm: number
+  /** sheet = 每张价格；meter = 每米价格（单位均为分） */
   priceCents: number
   kind: PaperKind
+  priceUnit?: PriceUnit
 }
 
 export interface PhotoSize {
@@ -65,6 +70,24 @@ export interface CutStep {
   merged: boolean
 }
 
+export interface RollSegment {
+  rollNumber: number
+  /** 库存整卷长度（mm） */
+  stockLengthMm: number
+  /** 本任务实际计费/切断长度（mm） */
+  usedLengthMm: number
+  /** 本卷切完后剩余长度（mm），可留下次使用 */
+  leftoverLengthMm: number
+  /** 沿送纸方向的切断位置（本卷局部坐标，mm） */
+  cutAtMm: number
+  /** 本卷在本次连续送纸中的起点（mm） */
+  startOffsetMm: number
+  /** 本卷切断处在本次连续送纸中的位置（mm） */
+  endOffsetMm: number
+  /** true = 本卷刚好用到卷尾，余料为 0 */
+  fullyUsed: boolean
+}
+
 export interface Sheet {
   index: number
   placements: Placement[]
@@ -72,9 +95,12 @@ export interface Sheet {
   /** 合并前的切割步数（用于共边合并的对比断言） */
   rawCutCount: number
   usedAreaMm2: number
+  /** 单张纸为整张面积；卷筒为实际切断段的面积，不包含可留用的卷尾 */
   sheetAreaMm2: number
   utilization: number
   wasteRects: WasteRect[]
+  /** 卷筒纸：本张版面对应一卷纸上切下的一段 */
+  roll?: RollSegment
 }
 
 export interface WasteRect {
@@ -97,6 +123,19 @@ export interface PackResult {
   stats: PackStats
 }
 
+export interface RollCostSegment {
+  rollNumber: number
+  usedLengthMm: number
+  leftoverLengthMm: number
+  cutAtMm: number
+  startOffsetMm: number
+  endOffsetMm: number
+  totalCents: number
+  perPhotoCents: number
+  photoCount: number
+  fullyUsed: boolean
+}
+
 export interface CostReport {
   paperName: string
   sheets: number
@@ -109,6 +148,12 @@ export interface CostReport {
   naiveWasteRate: number
   naiveTotalCents: number
   savedCents: number
+  /** 卷筒纸总计费长度（米） */
+  totalUsedMeters?: number
+  /** 卷筒纸计价单价（分/米） */
+  priceCentsPerMeter?: number
+  /** 卷筒纸分卷切断与成本明细 */
+  rollSegments?: RollCostSegment[]
 }
 
 export interface Task {
@@ -145,6 +190,8 @@ export interface Leftover {
   priceCents: number
   createdAt: number
   usedCount: number
+  kind?: PaperKind
+  priceUnit?: PriceUnit
 }
 
 export interface Settings {

@@ -28,6 +28,7 @@ export interface PdfPhotoRef {
 export interface PdfBuildInput {
   task: Task
   paper: Paper
+  paperOf?: (index: number) => Paper
   sheets: Sheet[]
   photoOf: (p: Placement) => PdfPhotoRef | undefined
   sizeLabelOf: (p: Placement) => string
@@ -65,7 +66,7 @@ async function buildSheetPage(
   index: number,
   photoRasters: Map<string, RasterImage>,
 ): Promise<PageSpec> {
-  const { paper } = input
+  const paper = input.paperOf?.(index) ?? input.paper
   const W = paper.wMm
   const H = paper.hMm
   const px = (mm: number) => mm * S
@@ -161,6 +162,13 @@ async function buildSheetPage(
   }
   body.push('Q')
 
+  if (sheet.roll) {
+    body.push('q 0.7 w 0.75 0.22 0.17 RG')
+    body.push(`${n2(px(0))} ${n2(py(H))} m ${n2(px(W))} ${n2(py(H))} l S`)
+    body.push('Q')
+    body.push(text(px(W - 2), py(H - 2), `Roll cut ${n2(H)}mm`, 4, true, false))
+  }
+
   // 纸张外框 + 页脚信息
   body.push('q 0.6 w 0.6 0.65 0.7 RG')
   body.push(`${n2(px(0.3))} ${n2(py(H - 0.3))} ${n2(px(W - 0.6))} ${n2(px(H - 0.6))} re S Q`)
@@ -209,10 +217,19 @@ async function buildInfoPage(input: PdfBuildInput): Promise<PageSpec> {
   body.push(text(px(15), py(y + 8), '100 mm ruler - measure this line after printing', 8))
 
   const lines: string[] = []
-  lines.push(`任务：${input.task.name}｜相纸：${input.paper.name} ${input.paper.wMm}×${input.paper.hMm}mm`)
+  lines.push(`任务：${input.task.name}｜相纸：${input.paper.name} ${input.paper.wMm}×${input.paper.kind === 'roll' ? '按实际切段' : `${input.paper.hMm}`}mm`)
   lines.push(
-    `隙距 ${input.task.gapMm}mm｜刀宽补偿 ${input.task.kerfMm}mm｜安全边 ${input.task.safeEdgeMm}mm｜共 ${input.sheets.length} 张相纸`,
+    `隙距 ${input.task.gapMm}mm｜刀宽补偿 ${input.task.kerfMm}mm｜安全边 ${input.task.safeEdgeMm}mm｜共 ${input.sheets.length} ${input.paper.kind === 'roll' ? '卷/段' : '张相纸'}`,
   )
+  if (input.paper.kind === 'roll') {
+    input.sheets.forEach((s) => {
+      if (s.roll) {
+        lines.push(
+          `第 ${s.roll.rollNumber} 卷：用 ${s.roll.usedLengthMm.toFixed(1)}mm，从 y=${s.roll.cutAtMm.toFixed(1)}mm 横断；余料 ${s.roll.leftoverLengthMm.toFixed(1)}mm${s.roll.fullyUsed ? '（刚好为零）' : ''}`,
+        )
+      }
+    })
+  }
   lines.push('')
   for (const s of input.sheets) {
     lines.push(`【第 ${s.index + 1} 张】共 ${s.cutSteps.length} 刀（未合并 ${s.rawCutCount} 刀）`)

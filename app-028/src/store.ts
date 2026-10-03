@@ -10,6 +10,7 @@ import {
   resolvePaper,
 } from './logic/library'
 import { pack, sheetsFromPlacements } from './logic/packer'
+import { computeCost } from './logic/cost'
 import { loadJSON, saveJSON } from './logic/storage'
 import type {
   Leftover,
@@ -164,6 +165,30 @@ export function runPack(task: Task): string | undefined {
   return undefined
 }
 
+/** 旧版本把卷筒按整卷固定高度结算；历史卷筒结果载入时重算，避免沿用旧米数与金额 */
+function migrateTaskResults(): void {
+  let changed = false
+  for (const task of tasks.value) {
+    const paper = resolvePaper(task, allPapers.value)
+    if (paper.kind !== 'roll') continue
+    const groups = groupsFromTask(task, allSizes.value)
+    if (!groups.length) {
+      if (task.result) {
+        task.result = undefined
+        changed = true
+      }
+      continue
+    }
+    const out = pack(groups, optionsFromTask(task, paper))
+    if (!out.error) {
+      task.result = out.result
+      changed = true
+    }
+  }
+  if (changed) touch()
+}
+migrateTaskResults()
+
 /** 当前生效的相纸版面：手工微调优先于自动排样 */
 export function sheetsOf(task: Task): Sheet[] {
   if (task.manual) {
@@ -172,6 +197,15 @@ export function sheetsOf(task: Task): Sheet[] {
     return sheetsFromPlacements(task.manual.placements, optionsFromTask(task, paper), count).sheets
   }
   return task.result?.sheets ?? []
+}
+
+/** 成本始终由当前有效版面重算；手工微调也不能沿用上一次自动排样金额 */
+export function costOf(task: Task) {
+  const paper = resolvePaper(task, allPapers.value)
+  const currentSheets = sheetsOf(task)
+  if (!currentSheets.length || !task.result) return undefined
+  const stats = { ...task.result.stats, totalPhotos: currentSheets.reduce((a, s) => a + s.placements.length, 0) }
+  return computeCost(paper, { ...task.result, sheets: currentSheets, stats }, currentSheets, task.safeEdgeMm)
 }
 
 export function manualPlacementsOf(task: Task): Placement[] {

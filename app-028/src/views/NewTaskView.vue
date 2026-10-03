@@ -19,7 +19,7 @@ import {
   tasks,
   templates,
 } from '../store'
-import { findPhotoSize, newId } from '../logic/library'
+import { findPhotoSize, newId, paperPriceUnit } from '../logic/library'
 import { formatCents, formatPercent } from '../logic/units'
 import type { Item, Paper, PhotoRef, Task } from '../logic/types'
 
@@ -36,6 +36,7 @@ const draft = reactive({
     marginMm: 3,
     priceCents: 200,
     kind: 'sheet',
+    priceUnit: 'sheet',
   } as Paper,
   items: [] as Item[],
   gapMm: settings.value.gapMm,
@@ -62,6 +63,8 @@ const currentPaper = computed<Paper>(() =>
     : allPapers.value.find((p) => p.id === draft.paperId) ?? allPapers.value[0],
 )
 
+const priceUnit = computed(() => paperPriceUnit(currentPaper.value))
+const priceLabel = computed(() => (priceUnit.value === 'meter' ? '/米' : '/张'))
 const usableText = computed(() => {
   const p = currentPaper.value
   const w = p.wMm - 2 * (p.marginMm + draft.safeEdgeMm)
@@ -93,6 +96,10 @@ function removeItem(id: string) {
 function onSizeChange(item: Item) {
   const s = findPhotoSize(allSizes.value, item.sizeId)
   item.rotateAllowed = s?.rotateByDefault ?? false
+}
+
+function onCustomKindChange() {
+  draft.customPaper.priceUnit = draft.customPaper.kind === 'roll' ? 'meter' : 'sheet'
 }
 
 function applyTemplate(tplId: string) {
@@ -160,7 +167,8 @@ function useLeftover(id: string) {
     hMm: l.hMm,
     marginMm: l.marginMm,
     priceCents: l.priceCents,
-    kind: 'sheet',
+    kind: l.kind ?? 'sheet',
+    priceUnit: l.priceUnit ?? 'sheet',
   }
   markLeftoverUsed(id)
   hint.value = `已使用余料「${l.name}」${l.wMm}×${l.hMm}mm`
@@ -248,36 +256,43 @@ function taskPaperName(t: Task) {
               相纸
               <select v-model="draft.paperId">
                 <option v-for="p in allPapers" :key="p.id" :value="p.id">
-                  {{ p.name }} · {{ p.wMm }}×{{ p.hMm }}mm · {{ formatCents(p.priceCents) }}/张
+                  {{ p.name }} · {{ p.wMm }}×{{ p.hMm }}mm · {{ formatCents(p.priceCents) }}{{ p.kind === 'roll' && paperPriceUnit(p) === 'meter' ? '/米' : '/张' }}
                 </option>
                 <option value="custom">自定义相纸…</option>
               </select>
             </label>
             <div v-if="draft.paperId === 'custom'" class="grid cols-2">
               <label class="field">
-                宽 mm
+                {{ draft.customPaper.kind === 'roll' ? '幅宽 mm' : '宽 mm' }}
                 <input v-model.number="draft.customPaper.wMm" type="number" min="10" step="0.1" />
               </label>
               <label class="field">
-                高 mm
+                {{ draft.customPaper.kind === 'roll' ? '整卷长度 mm' : '高 mm' }}
                 <input v-model.number="draft.customPaper.hMm" type="number" min="10" step="0.1" />
+              </label>
+              <label class="field">
+                类型
+                <select v-model="draft.customPaper.kind" @change="onCustomKindChange">
+                  <option value="sheet">单张</option>
+                  <option value="roll">卷筒（按米）</option>
+                </select>
               </label>
               <label class="field">
                 纸边留白 mm
                 <input v-model.number="draft.customPaper.marginMm" type="number" min="0" step="0.5" />
               </label>
               <label class="field">
-                单价（分）
+                单价（分{{ draft.customPaper.kind === 'roll' ? '/米' : '/张' }}）
                 <input v-model.number="draft.customPaper.priceCents" type="number" min="0" step="10" />
               </label>
             </div>
             <div class="kv">
-              <dt>相纸尺寸</dt>
+              <dt>{{ currentPaper.kind === 'roll' ? '幅宽 × 整卷长' : '相纸尺寸' }}</dt>
               <dd>{{ currentPaper.wMm }} × {{ currentPaper.hMm }} mm</dd>
               <dt>可用区</dt>
               <dd>{{ usableText }}</dd>
-              <dt>单张成本</dt>
-              <dd>{{ formatCents(currentPaper.priceCents) }}</dd>
+              <dt>{{ priceUnit === 'meter' ? '每米成本' : '单张成本' }}</dt>
+              <dd>{{ formatCents(currentPaper.priceCents) }}{{ priceLabel }}</dd>
             </div>
             <div class="grid cols-2">
               <label class="field">

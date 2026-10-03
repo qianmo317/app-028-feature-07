@@ -7,7 +7,7 @@
     { "id": "p12x18", "name": "12×18 英寸", "wMm": 305, "hMm": 457, "marginMm": 5, "priceCents": 600, "kind": "sheet" },
     { "id": "pa4", "name": "A4", "wMm": 210, "hMm": 297, "marginMm": 3, "priceCents": 250, "kind": "sheet" },
     { "id": "pa3", "name": "A3", "wMm": 297, "hMm": 420, "marginMm": 4, "priceCents": 400, "kind": "sheet" },
-    { "id": "proll152", "name": "卷筒相纸（宽 152mm × 长 5000mm）", "wMm": 152, "hMm": 5000, "marginMm": 3, "priceCents": 3000, "kind": "roll" }
+    { "id": "proll152", "name": "卷筒相纸（宽 152mm × 5m/卷）", "wMm": 152, "hMm": 5000, "marginMm": 3, "priceCents": 600, "kind": "roll", "priceUnit": "meter" }
   ],
   "photoSizes": [
     { "id": "s1cun", "name": "1 寸", "wMm": 25, "hMm": 35, "rotateByDefault": false },

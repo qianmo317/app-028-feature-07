@@ -20,6 +20,9 @@ const props = withDefaults(
     invalid?: boolean
     headerText?: string
     footerText?: string
+    /** 卷筒切段时用实际段高覆盖整卷高度 */
+    effectivePaper?: Paper
+    showRollCut?: boolean
     thumbOf?: (p: Placement) => string | undefined
     labelOf?: (itemId: string) => string
   }>(),
@@ -38,6 +41,8 @@ const props = withDefaults(
     invalid: false,
     headerText: '',
     footerText: '',
+    effectivePaper: undefined,
+    showRollCut: true,
     thumbOf: undefined,
     labelOf: undefined,
   },
@@ -55,13 +60,14 @@ const cutW = computed(() => (props.unit === 'mm' ? '0.22mm' : '1.5px'))
 const textSm = computed(() => (props.unit === 'mm' ? '2.5mm' : '10px'))
 const textXs = computed(() => (props.unit === 'mm' ? '2.1mm' : '9px'))
 
-const inset = computed(() => props.paper.marginMm + props.safeEdgeMm)
-const usableW = computed(() => Math.max(0, props.paper.wMm - 2 * inset.value))
-const usableH = computed(() => Math.max(0, props.paper.hMm - 2 * inset.value))
+const actualPaper = computed(() => props.effectivePaper ?? props.paper)
+const inset = computed(() => actualPaper.value.marginMm + props.safeEdgeMm)
+const usableW = computed(() => Math.max(0, actualPaper.value.wMm - 2 * inset.value))
+const usableH = computed(() => Math.max(0, actualPaper.value.hMm - 2 * inset.value))
 
 const paperStyle = computed(() => ({
-  width: u(props.paper.wMm),
-  height: u(props.paper.hMm),
+  width: u(actualPaper.value.wMm),
+  height: u(actualPaper.value.hMm),
 }))
 
 const gridStyle = computed(() => {
@@ -135,6 +141,16 @@ function cutLabelStyle(c: Sheet['cutSteps'][number]) {
   }
 }
 
+const rollCutStyle = computed(() => ({
+  left: u(0),
+  top: u(actualPaper.value.hMm),
+  width: u(actualPaper.value.wMm),
+  height: cutW.value,
+  background: '#c0392b',
+  zIndex: 7,
+  transform: 'translateY(-50%)',
+}))
+
 const dragSeq = ref(-1)
 let startX = 0
 let startY = 0
@@ -172,7 +188,7 @@ function onPointerUp() {
 }
 
 const headerFontSize = computed(() => {
-  const mm = Math.max(1.5, Math.min(4, props.paper.marginMm * 0.5))
+  const mm = Math.max(1.5, Math.min(4, actualPaper.value.marginMm * 0.5))
   return props.unit === 'mm' ? `${mm}mm` : `${mm * props.scale}px`
 })
 
@@ -189,7 +205,7 @@ const showDetail = computed(() => props.scale >= 1.6 || props.unit === 'mm')
       class="cut-label"
       :style="{
         left: '50%',
-        top: u(paper.marginMm / 2),
+        top: u(actualPaper.marginMm / 2),
         transform: 'translate(-50%, -50%)',
         fontSize: headerFontSize,
       }"
@@ -201,7 +217,7 @@ const showDetail = computed(() => props.scale >= 1.6 || props.unit === 'mm')
       class="cut-label"
       :style="{
         left: '50%',
-        top: u(paper.hMm - paper.marginMm / 2),
+        top: u(actualPaper.hMm - actualPaper.marginMm / 2),
         transform: 'translate(-50%, -50%)',
         fontSize: headerFontSize,
       }"
@@ -242,6 +258,12 @@ const showDetail = computed(() => props.scale >= 1.6 || props.unit === 'mm')
           {{ i + 1 }}
         </div>
       </template>
+      <div
+        v-if="showRollCut && sheet.roll"
+        class="cutline roll-cut"
+        :style="rollCutStyle"
+        :title="`卷筒横断：${sheet.roll.cutAtMm.toFixed(1)}mm`"
+      ></div>
     </template>
   </div>
 </template>

@@ -6,14 +6,14 @@ import SheetView from '../components/SheetView.vue'
 import {
   allPapers,
   allSizes,
+  costOf,
   getTask,
   makePhotoResolver,
   makeThumbResolver,
   photoVersion,
   sheetsOf,
 } from '../store'
-import { computeCost } from '../logic/cost'
-import { cutListRows, csvBlob } from '../logic/csv'
+import { cutListRows, csvBlob, sheetPaperOf } from '../logic/csv'
 import { downloadBlob } from '../logic/image'
 import { findPhotoSize, resolvePaper } from '../logic/library'
 import { buildPdf } from '../logic/pdf'
@@ -28,7 +28,7 @@ const task = computed<Task | undefined>(() => getTask(String(route.params.id)))
 const paper = computed(() => (task.value ? resolvePaper(task.value, allPapers.value) : allPapers.value[0]))
 const sheets = computed(() => (task.value ? sheetsOf(task.value) : []))
 const valid = computed(() => !task.value?.manual || task.value.manual.valid)
-const cost = computed(() => (task.value?.result ? computeCost(paper.value, task.value.result) : undefined))
+const cost = computed(() => (task.value ? costOf(task.value) : undefined))
 const dpi = ref(300)
 const busy = ref(false)
 const message = ref('')
@@ -41,6 +41,10 @@ const thumbs = computed(() => {
 function photoResolver() {
   void photoVersion.value
   return task.value ? makePhotoResolver(task.value, sheets.value) : () => undefined
+}
+
+function displayPaperOf(s: (typeof sheets.value)[number]) {
+  return sheetPaperOf(paper.value, s)
 }
 
 function sizeLabelOf(p: Placement): string {
@@ -72,6 +76,7 @@ async function exportPdf() {
     const blob = await buildPdf({
       task: task.value!,
       paper: paper.value,
+      paperOf: (index) => sheetPaperOf(paper.value, sheets.value[index]),
       sheets: sheets.value,
       photoOf: photoResolver(),
       sizeLabelOf,
@@ -93,7 +98,7 @@ async function exportPng(index: number) {
     const sheet = sheets.value[index]
     const blob = await buildSheetPng({
       task: task.value!,
-      paper: paper.value,
+      paper: sheetPaperOf(paper.value, sheet),
       sheet,
       dpi: dpi.value,
       photoOf: photoResolver(),
@@ -116,7 +121,7 @@ async function exportAllPng() {
       message.value = `正在导出第 ${i + 1}/${sheets.value.length} 张…`
       const blob = await buildSheetPng({
         task: task.value!,
-        paper: paper.value,
+        paper: sheetPaperOf(paper.value, sheets.value[i]),
         sheet: sheets.value[i],
         dpi: dpi.value,
         photoOf: photoResolver(),
@@ -146,6 +151,9 @@ function exportCutList() {
   message.value = '切割清单 CSV 已导出'
 }
 
+const yuan = (cents: number) =>
+  (cents / 100).toFixed(Math.abs(cents - Math.round(cents)) > 1e-9 ? 4 : 2)
+
 function exportCost() {
   const t = task.value
   const c = cost.value
@@ -153,16 +161,38 @@ function exportCost() {
   const rows: Array<Array<string | number>> = [
     ['任务', t.name],
     ['相纸', c.paperName],
-    ['相纸单价（元）', (paper.value.priceCents / 100).toFixed(2)],
-    ['用纸张数', c.sheets],
+    [
+      c.totalUsedMeters !== undefined ? '相纸单价（元/米）' : '相纸单价（元/张）',
+      yuan(paper.value.priceCents),
+    ],
+    [c.totalUsedMeters !== undefined ? '切段/分卷数' : '用纸张数', c.sheets],
     ['照片总数', c.totalPhotoCount],
-    ['总材料成本（元）', (c.totalCents / 100).toFixed(2)],
+    ['总材料成本（元）', yuan(c.totalCents)],
     ['每张照片摊薄成本（元）', (c.perPhotoCents / 100).toFixed(4)],
-    ['本方案利用率', formatPercent(t.result?.stats.avgUtilization ?? 0)],
+    ...(c.totalUsedMeters !== undefined
+      ? [
+          ['实际使用长度（米）', c.totalUsedMeters] as Array<string | number>,
+          [] as Array<string | number>,
+          ['卷序', '使用 mm', '余料 mm', '断点 mm', '本次起点 mm', '本次断点 mm', '照片数', '金额 元', '每张摊薄 元'],
+          ...(c.rollSegments ?? []).map((r) => [
+            r.rollNumber,
+            Math.round(r.usedLengthMm * 100) / 100,
+            Math.round(r.leftoverLengthMm * 100) / 100,
+            Math.round(r.cutAtMm * 100) / 100,
+            Math.round(r.startOffsetMm * 100) / 100,
+            Math.round(r.endOffsetMm * 100) / 100,
+            r.photoCount,
+            yuan(r.totalCents),
+            (r.perPhotoCents / 100).toFixed(4),
+          ]),
+          [] as Array<string | number>,
+        ]
+      : []),
+    ['本方案利用率', formatPercent(1 - c.wasteRate)],
     ['本方案浪费率', formatPercent(c.wasteRate)],
-    ['不排样逐张打印成本（元）', (c.naiveTotalCents / 100).toFixed(2)],
+    ['不排样逐张打印成本（元）', yuan(c.naiveTotalCents)],
     ['不排样逐张打印浪费率', formatPercent(c.naiveWasteRate)],
-    ['节省（元）', (c.savedCents / 100).toFixed(2)],
+    ['节省（元）', yuan(c.savedCents)],
     [],
     ['照片编号', '所在相纸', '尺寸', '宽 mm', '高 mm', '旋转'],
   ]
@@ -190,7 +220,7 @@ function printView() {
     <div class="row no-print">
       <h1 style="margin: 0">导出与打印</h1>
       <span class="badge brand">{{ task.name }}</span>
-      <span class="badge">{{ sheets.length }} 张相纸</span>
+      <span class="badge">{{ paper.kind === 'roll' ? `${sheets.length} 卷/段` : `${sheets.length} 张相纸` }}</span>
       <div class="spacer"></div>
       <button class="btn" @click="router.push(`/cut/${task.id}`)">← 裁切步骤</button>
     </div>
@@ -239,9 +269,9 @@ function printView() {
           </div>
           <div class="kv" style="margin-top: 10px">
             <dt>相纸</dt>
-            <dd>{{ paper.wMm }}×{{ paper.hMm }} mm</dd>
+            <dd>{{ paper.wMm }}×{{ paper.kind === 'roll' ? '按实际切段' : `${paper.hMm}` }} mm{{ paper.kind === 'roll' ? `（整卷 ${paper.hMm}mm）` : '' }}</dd>
             <dt>页数</dt>
-            <dd>{{ sheets.length }} 张相纸 + 1 页校验/清单</dd>
+            <dd>{{ sheets.length }} {{ paper.kind === 'roll' ? '卷/段' : '张相纸' }} + 1 页校验/清单</dd>
             <dt>含照片</dt>
             <dd>{{ sheets.reduce((a, s) => a + s.placements.length, 0) }} 张（有导入底片时嵌入）</dd>
           </div>
@@ -250,20 +280,38 @@ function printView() {
         <div class="card">
           <h3>成本表</h3>
           <div v-if="cost" class="kv">
-            <dt>相纸单价</dt>
-            <dd>{{ formatCents(paper.priceCents) }}/张</dd>
-            <dt>用纸张数</dt>
-            <dd>{{ cost.sheets }}</dd>
-            <dt>总材料成本</dt>
-            <dd>{{ formatCents(cost.totalCents) }}</dd>
-            <dt>每张照片摊薄</dt>
-            <dd>{{ formatCents(cost.perPhotoCents) }}</dd>
-            <dt>本方案浪费率</dt>
-            <dd>{{ formatPercent(cost.wasteRate) }}</dd>
-            <dt>逐张打印浪费率</dt>
-            <dd>{{ formatPercent(cost.naiveWasteRate) }}</dd>
-            <dt>对比逐张打印节省</dt>
-            <dd>{{ formatCents(cost.savedCents) }}</dd>
+            <template v-if="cost.totalUsedMeters !== undefined">
+              <dt>卷筒单价</dt>
+              <dd>{{ formatCents(paper.priceCents) }}/米</dd>
+              <dt>实际使用</dt>
+              <dd>{{ cost.totalUsedMeters.toFixed(3) }} 米</dd>
+              <dt>切段数</dt>
+              <dd>{{ cost.sheets }}</dd>
+              <dt>总材料成本</dt>
+              <dd>{{ formatCents(cost.totalCents) }}</dd>
+              <dt>每张照片摊薄</dt>
+              <dd>{{ formatCents(cost.perPhotoCents) }}</dd>
+              <dt>本方案浪费率</dt>
+              <dd>{{ formatPercent(cost.wasteRate) }}</dd>
+              <dt>节省</dt>
+              <dd>{{ formatCents(cost.savedCents) }}</dd>
+            </template>
+            <template v-else>
+              <dt>相纸单价</dt>
+              <dd>{{ formatCents(paper.priceCents) }}/张</dd>
+              <dt>用纸张数</dt>
+              <dd>{{ cost.sheets }}</dd>
+              <dt>总材料成本</dt>
+              <dd>{{ formatCents(cost.totalCents) }}</dd>
+              <dt>每张照片摊薄</dt>
+              <dd>{{ formatCents(cost.perPhotoCents) }}</dd>
+              <dt>本方案浪费率</dt>
+              <dd>{{ formatPercent(cost.wasteRate) }}</dd>
+              <dt>逐张打印浪费率</dt>
+              <dd>{{ formatPercent(cost.naiveWasteRate) }}</dd>
+              <dt>对比逐张打印节省</dt>
+              <dd>{{ formatCents(cost.savedCents) }}</dd>
+            </template>
           </div>
         </div>
       </div>
@@ -273,14 +321,16 @@ function printView() {
         <div class="card-sub">每张照片都有编号，和清单一一对应，方便对号入座</div>
         <div v-for="s in sheets" :key="s.index" style="margin-bottom: 16px">
           <div class="row" style="margin-bottom: 6px">
-            <span class="badge">第 {{ s.index + 1 }} 张</span>
+            <span class="badge">第 {{ s.index + 1 }}{{ paper.kind === 'roll' ? ' 段' : ' 张' }}</span>
             <span class="badge">{{ s.cutSteps.length }} 刀</span>
+            <span v-if="s.roll" class="badge">用 {{ (s.roll.usedLengthMm / 1000).toFixed(3) }}m，余 {{ (s.roll.leftoverLengthMm / 1000).toFixed(3) }}m</span>
             <span class="badge">利用率 {{ formatPercent(s.utilization) }}</span>
           </div>
           <div class="sheet-wrap">
             <SheetView
               :sheet="s"
               :paper="paper"
+              :effective-paper="displayPaperOf(s)"
               :safe-edge-mm="task.safeEdgeMm"
               :scale="Math.max(0.5, Math.min(2.2, 700 / paper.wMm))"
               :thumb-of="thumbs"
@@ -292,10 +342,11 @@ function printView() {
 
     <!-- 打印版：每张相纸一页，尺寸按毫米精确渲染 -->
     <div class="print-only">
-      <div v-for="s in sheets" :key="s.index" class="print-sheet" :style="{ width: `${paper.wMm}mm`, height: `${paper.hMm}mm` }">
+      <div v-for="s in sheets" :key="s.index" class="print-sheet" :style="{ width: `${displayPaperOf(s).wMm}mm`, height: `${displayPaperOf(s).hMm}mm` }">
         <SheetView
           :sheet="s"
           :paper="paper"
+          :effective-paper="displayPaperOf(s)"
           :safe-edge-mm="0"
           unit="mm"
           :show-safe-area="false"
@@ -313,7 +364,7 @@ function printView() {
         </p>
         <RulerScale unit="mm" :length-mm="100" />
         <p style="font-size: 9pt; margin-top: 10mm">
-          相纸：{{ paper.name }} {{ paper.wMm }}×{{ paper.hMm }}mm ｜ 隙距 {{ task.gapMm }}mm ｜ 刀宽补偿
+          相纸：{{ paper.name }} {{ paper.wMm }}×{{ paper.kind === 'roll' ? '按实际切段' : paper.hMm }}mm{{ paper.kind === 'roll' ? `（整卷 ${paper.hMm}mm）` : '' }} ｜ 隙距 {{ task.gapMm }}mm ｜ 刀宽补偿
           {{ task.kerfMm }}mm ｜ 安全边 {{ task.safeEdgeMm }}mm
         </p>
       </div>

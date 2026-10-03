@@ -11,7 +11,7 @@ import {
   removeLeftover,
   templates,
 } from '../store'
-import { BUILTIN_PAPERS, BUILTIN_PHOTO_SIZES } from '../logic/library'
+import { BUILTIN_PAPERS, BUILTIN_PHOTO_SIZES, paperPriceUnit } from '../logic/library'
 import { formatCents, inchToMm } from '../logic/units'
 
 const error = ref('')
@@ -24,6 +24,7 @@ const paperForm = reactive({
   marginMm: 3,
   priceCents: 200,
   kind: 'sheet' as 'sheet' | 'roll',
+  priceUnit: 'sheet' as 'sheet' | 'meter',
 })
 
 const sizeForm = reactive({ name: '', wMm: 50, hMm: 70, rotateByDefault: false })
@@ -61,6 +62,10 @@ function addSize() {
   sizeForm.name = ''
 }
 
+function onPaperKindChange() {
+  paperForm.priceUnit = paperForm.kind === 'roll' ? 'meter' : 'sheet'
+}
+
 function inchHint(wMm: number, hMm: number): string {
   return `${(wMm / inchToMm(1)).toFixed(2)}″ × ${(hMm / inchToMm(1)).toFixed(2)}″`
 }
@@ -78,7 +83,7 @@ function inchHint(wMm: number, hMm: number): string {
     <div class="grid cols-2">
       <div class="card">
         <h3>相纸规格（{{ allPapers.length }}）</h3>
-        <div class="card-sub">单价用于成本核算；「卷筒」按整卷计价</div>
+        <div class="card-sub">单张单价按张计；卷筒单价按米计，排样后按实际切断长度核算</div>
         <table class="data">
           <thead>
             <tr>
@@ -100,7 +105,7 @@ function inchHint(wMm: number, hMm: number): string {
               <td class="num">{{ p.wMm }} × {{ p.hMm }}</td>
               <td class="num">{{ inchHint(p.wMm, p.hMm) }}</td>
               <td class="num">{{ p.marginMm }}mm</td>
-              <td class="num">{{ formatCents(p.priceCents) }}</td>
+              <td class="num">{{ formatCents(p.priceCents) }}{{ p.kind === 'roll' && paperPriceUnit(p) === 'meter' ? '/米' : '/张' }}</td>
               <td>
                 <span class="badge" :class="builtinPaperIds.has(p.id) ? '' : 'brand'">
                   {{ builtinPaperIds.has(p.id) ? '内置' : '自定义' }}
@@ -125,25 +130,25 @@ function inchHint(wMm: number, hMm: number): string {
             名称
             <input v-model="paperForm.name" type="text" placeholder="如 20×24 英寸" />
           </label>
-          <label class="field" style="max-width: 96px">
-            宽 mm
-            <input v-model.number="paperForm.wMm" type="number" min="10" step="0.1" />
-          </label>
-          <label class="field" style="max-width: 96px">
-            高 mm
-            <input v-model.number="paperForm.hMm" type="number" min="10" step="0.1" />
-          </label>
+            <label class="field" style="max-width: 120px">
+              {{ paperForm.kind === 'roll' ? '幅宽 mm' : '宽 mm' }}
+              <input v-model.number="paperForm.wMm" type="number" min="10" step="0.1" />
+            </label>
+            <label class="field" style="max-width: 120px">
+              {{ paperForm.kind === 'roll' ? '整卷长 mm' : '高 mm' }}
+              <input v-model.number="paperForm.hMm" type="number" min="10" step="0.1" />
+            </label>
           <label class="field" style="max-width: 110px">
             纸边留白 mm
             <input v-model.number="paperForm.marginMm" type="number" min="0" step="0.5" />
           </label>
-          <label class="field" style="max-width: 110px">
-            单价（分）
+          <label class="field" style="max-width: 130px">
+            单价（分{{ paperForm.kind === 'roll' ? '/米' : '/张' }}）
             <input v-model.number="paperForm.priceCents" type="number" min="0" step="10" />
           </label>
           <label class="field" style="max-width: 110px">
             类型
-            <select v-model="paperForm.kind">
+            <select v-model="paperForm.kind" @change="onPaperKindChange">
               <option value="sheet">单张</option>
               <option value="roll">卷筒</option>
             </select>

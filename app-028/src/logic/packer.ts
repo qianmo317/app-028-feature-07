@@ -24,6 +24,8 @@ export interface PackOptions {
   gapMm: number
   kerfMm: number
   allowRotate: boolean
+  /** 卷筒纸：同一卷内连续送纸，最后按实际占用长度切断并按米计价 */
+  variableLength?: boolean
 }
 
 export interface PackOutput {
@@ -63,15 +65,28 @@ export function sheetsFromPlacements(
   sheetCount: number,
 ): { sheets: Sheet[]; errors: string[] } {
   const errors: string[] = []
-  const region = usableRegion(opts)
-  if (!region) return { sheets: [], errors: ['纸边留白 + 四周安全边 已超过相纸尺寸'] }
+  const baseRegion = usableRegion(opts)
+  if (!baseRegion) return { sheets: [], errors: ['纸边留白 + 四周安全边 已超过相纸尺寸'] }
   const m = (opts.kerfMm + opts.gapMm) / 2
   const sheets: Sheet[] = []
+  const compactRoll = !!opts.variableLength
   for (let s = 0; s < sheetCount; s++) {
     const list = placements
       .filter((p) => p.sheetIndex === s)
       .slice()
       .sort((a, b) => (Math.abs(a.y - b.y) > 0.01 ? a.y - b.y : a.x - b.x))
+    const inset = opts.marginMm + opts.safeEdgeMm
+    const compactH = list.length
+      ? Math.min(opts.paperH, round(Math.max(...list.map((p) => p.y + p.h)) + inset, 4))
+      : opts.paperH
+    const sheetOpts = compactRoll
+      ? { ...opts, paperH: compactH }
+      : opts
+    const region = usableRegion(sheetOpts)
+    if (!region) {
+      errors.push(`第 ${s + 1} 张纸的有效长度不足`)
+      continue
+    }
     const slots: Rect[] = list.map((p) => ({
       x: p.x - m,
       y: p.y - m,
@@ -111,7 +126,8 @@ export function sheetsFromPlacements(
     }
     const cutSteps = toCutSteps(s, plan.cuts, plan.rawCuts)
     const usedAreaMm2 = list.reduce((acc, p) => acc + p.w * p.h, 0)
-    const sheetAreaMm2 = opts.paperW * opts.paperH
+    const usedLengthMm = round(sheetOpts.paperH, 4)
+    const sheetAreaMm2 = sheetOpts.paperW * usedLengthMm
     const wasteRects: WasteRect[] = plan.pieces
       .filter((pc) => pc.idx.length === 0 && pc.r.w >= 8 && pc.r.h >= 8)
       .map((pc) => ({
@@ -120,16 +136,32 @@ export function sheetsFromPlacements(
         w: round(pc.r.w, 3),
         h: round(pc.r.h, 3),
       }))
-    sheets.push({
+    const sheet: Sheet = {
       index: s,
       placements: list,
       cutSteps,
       rawCutCount: plan.rawCuts.length,
       usedAreaMm2: round(usedAreaMm2, 3),
-      sheetAreaMm2,
+      sheetAreaMm2: round(sheetAreaMm2, 3),
       utilization: sheetAreaMm2 > 0 ? usedAreaMm2 / sheetAreaMm2 : 0,
       wasteRects,
-    })
+    }
+    if (compactRoll) {
+      const startOffsetMm = round(sheets.reduce((acc, prev) => acc + (prev.roll?.usedLengthMm ?? 0), 0), 4)
+      const stockLengthMm = opts.paperH
+      const leftoverLengthMm = round(Math.max(0, stockLengthMm - usedLengthMm), 4)
+      sheet.roll = {
+        rollNumber: s + 1,
+        stockLengthMm,
+        usedLengthMm,
+        leftoverLengthMm,
+        cutAtMm: usedLengthMm,
+        startOffsetMm,
+        endOffsetMm: round(startOffsetMm + usedLengthMm, 4),
+        fullyUsed: leftoverLengthMm <= FIT_EPS,
+      }
+    }
+    sheets.push(sheet)
   }
   return { sheets, errors }
 }
@@ -179,7 +211,7 @@ function findBest(free: Rect[], w: number, h: number, allowRotate: boolean): Fit
 }
 
 /** 在空闲矩形内放置 pw×ph，并按整边切分剩余区域 */
-function splitPlace(free: Rect[], idx: number, pw: number, ph: number): Rect {
+function splitPlace(free: Rect[], idx: number, pw: number, ph: number, preferWidth = false): Rect {
   const f = free[idx]
   free.splice(idx, 1)
   const placed: Rect = { x: f.x, y: f.y, w: pw, h: ph }
@@ -191,6 +223,12 @@ function splitPlace(free: Rect[], idx: number, pw: number, ph: number): Rect {
     return placed
   }
   if (dw <= EPS) {
+    free.push({ x: f.x, y: f.y + ph, w: f.w, h: dh })
+    return placed
+  }
+  if (preferWidth) {
+    // 卷筒纸沿幅宽优先摆成同一行：先切右侧同高余料，再切下方整幅余料，缩短送纸长度。
+    free.push({ x: f.x + pw, y: f.y, w: dw, h: ph })
     free.push({ x: f.x, y: f.y + ph, w: f.w, h: dh })
     return placed
   }
@@ -218,7 +256,7 @@ function tryPlaceOne(free: Rect[], g: PackGroup, opts: PackOptions, m: number): 
   const fit = findBest(free, sw, sh, opts.allowRotate && g.allowRotate)
   if (!fit) return null
   const trial = free.slice()
-  const placed = splitPlace(trial, fit.idx, fit.w, fit.h)
+  const placed = splitPlace(trial, fit.idx, fit.w, fit.h, !!opts.variableLength)
   return { free: trial, placed, rotated: fit.rotated }
 }
 
@@ -283,7 +321,17 @@ export function pack(groups: PackGroup[], opts: PackOptions): PackOutput {
     }
   }
 
+  if (opts.variableLength) {
+    // 连续送纸时，只有空卷也放不下整组的任务才允许拆散；其余整组任务不得被卷界拆开。
+    for (const g of queue) {
+      if (g.copies > 1 && g.keepTogether && !tryPlaceMany([{ ...region }], g, g.copies, opts, m)) {
+        g.keepTogether = false
+      }
+    }
+  }
+
   const rawSheets: Array<{ placements: PlacedRaw[] }> = []
+  const variableLength = !!opts.variableLength
   let guard = 0
   while (queue.some((g) => g.copies > 0) && guard++ < 20000) {
     let free: Rect[] = [{ ...region }]
@@ -294,11 +342,23 @@ export function pack(groups: PackGroup[], opts: PackOptions): PackOutput {
       placements.push({ itemId: g.itemId, rect: t.placed, rotated: t.rotated })
     }
 
+    const blockedByKeepTogether = (): boolean => {
+      if (!variableLength || placements.length === 0) return false
+      // 先连续排样：卷尾放不下的整组先暂缓，尽量让其它散张填满这段卷尾。
+      return queue.some(
+        (g) =>
+          g.copies > 1 &&
+          g.keepTogether &&
+          !tryPlaceMany(free, g, g.copies, opts, m) &&
+          tryPlaceMany([{ ...region }], g, g.copies, opts, m) !== null,
+      )
+    }
+
     let progress = true
     while (progress) {
       progress = false
-      // 不拆散：若该组能整组放进空纸、却放不进当前剩余空间，则结束当前纸另起一张
-      if (placements.length > 0) {
+      // 单张纸保持原策略：不拆散组在当前纸面放不下时立即另起一张。
+      if (placements.length > 0 && !variableLength) {
         const blocked = queue.some(
           (g) =>
             g.copies > 1 &&
@@ -318,7 +378,7 @@ export function pack(groups: PackGroup[], opts: PackOptions): PackOutput {
         }
       }
       for (const g of queue) {
-        if (g.copies <= 0) continue
+        if (g.copies <= 0 || (variableLength && g.keepTogether)) continue
         let t = tryPlaceOne(free, g, opts, m)
         while (t) {
           commit(t, g)
@@ -328,6 +388,7 @@ export function pack(groups: PackGroup[], opts: PackOptions): PackOutput {
           t = tryPlaceOne(free, g, opts, m)
         }
       }
+      if (placements.length > 0 && blockedByKeepTogether()) break
       if (free.length > 400) {
         free = free.filter((r) => r.w > 0.5 && r.h > 0.5)
       }
@@ -380,11 +441,11 @@ export function pack(groups: PackGroup[], opts: PackOptions): PackOutput {
 
   const totalPhotos = sheets.reduce((acc, s) => acc + s.placements.length, 0)
   const totalUsed = sheets.reduce((acc, s) => acc + s.usedAreaMm2, 0)
+  const billedArea = sheets.reduce((acc, s) => acc + s.sheetAreaMm2, 0)
   const stats: PackStats = {
     totalPhotos,
     sheets: sheets.length,
-    avgUtilization:
-      totalUsed > 0 ? totalUsed / (sheets.length * opts.paperW * opts.paperH) : 0,
+    avgUtilization: billedArea > 0 ? totalUsed / billedArea : 0,
     elapsedMs: round(performance.now() - started, 2),
     keepTogetherBroken,
   }

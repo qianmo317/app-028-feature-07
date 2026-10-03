@@ -47,7 +47,8 @@ export function formatMm(n: number, digits = 1): string {
 }
 
 export function formatCents(cents: number): string {
-  return `¥${(cents / 100).toFixed(2)}`
+  const digits = Math.abs(cents - Math.round(cents)) > 1e-9 ? 4 : 2
+  return `¥${(cents / 100).toFixed(digits)}`
 }
 
 export function formatPercent(v: number, digits = 1): string {
